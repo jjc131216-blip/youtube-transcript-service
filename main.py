@@ -111,7 +111,13 @@ def fetch_transcript_text(video_id: str, lang: str) -> str:
         vtt_url = track[0].get("url")
 
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    resp = requests.get(vtt_url, timeout=20, proxies=proxies)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+    }
+    resp = requests.get(vtt_url, timeout=20, proxies=proxies, headers=headers)
     resp.raise_for_status()
     return vtt_to_text(resp.text)
 
