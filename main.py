@@ -7,23 +7,22 @@ from youtube_transcript_api._errors import (
     NoTranscriptFound,
     VideoUnavailable,
 )
-from youtube_transcript_api.proxies import WebshareProxyConfig
 
 app = FastAPI(title="YouTube Transcript Service")
 
-# Webshare proxy credentials (set as Railway environment variables).
-# Without these, YouTube blocks most cloud/datacenter IPs from fetching transcripts.
-WEBSHARE_USERNAME = os.environ.get("WEBSHARE_USERNAME")
-WEBSHARE_PASSWORD = os.environ.get("WEBSHARE_PASSWORD")
+# YouTube blocks most datacenter/cloud IPs (Railway included) from fetching
+# transcripts. Routing through a proxy (e.g. Webshare) works around this.
+# Set these as environment variables in Railway; if unset, no proxy is used.
+PROXY_USERNAME = os.environ.get("PROXY_USERNAME")
+PROXY_PASSWORD = os.environ.get("PROXY_PASSWORD")
+PROXY_HOST = os.environ.get("PROXY_HOST")
+PROXY_PORT = os.environ.get("PROXY_PORT")
 
-_proxy_config = None
-if WEBSHARE_USERNAME and WEBSHARE_PASSWORD:
-    _proxy_config = WebshareProxyConfig(
-        proxy_username=WEBSHARE_USERNAME,
-        proxy_password=WEBSHARE_PASSWORD,
-    )
-
-_api = YouTubeTranscriptApi(proxy_config=_proxy_config)
+def get_proxies():
+    if PROXY_USERNAME and PROXY_PASSWORD and PROXY_HOST and PROXY_PORT:
+        proxy_url = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
+        return {"http": proxy_url, "https": proxy_url}
+    return None
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -55,16 +54,19 @@ def get_transcript(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    proxies = get_proxies()
     try:
         try:
-            fetched = _api.fetch(video_id, languages=[lang, "en", "ko"])
+            segments = YouTubeTranscriptApi.get_transcript(
+                video_id, languages=[lang, "en", "ko"], proxies=proxies
+            )
         except NoTranscriptFound:
             # fall back to whatever transcript is available (auto-generated included)
-            transcript_list = _api.list(video_id)
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, proxies=proxies)
             transcript = next(iter(transcript_list))
-            fetched = transcript.fetch()
+            segments = transcript.fetch()
 
-        text = " ".join(snippet.text.strip() for snippet in fetched if snippet.text.strip())
+        text = " ".join(seg["text"].strip() for seg in segments if seg["text"].strip())
         return {
             "video_id": video_id,
             "length_chars": len(text),
