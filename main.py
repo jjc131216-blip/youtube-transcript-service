@@ -1,3 +1,4 @@
+import os
 import re
 from fastapi import FastAPI, HTTPException, Query
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -6,8 +7,23 @@ from youtube_transcript_api._errors import (
     NoTranscriptFound,
     VideoUnavailable,
 )
+from youtube_transcript_api.proxies import WebshareProxyConfig
 
 app = FastAPI(title="YouTube Transcript Service")
+
+# Webshare proxy credentials (set as Railway environment variables).
+# Without these, YouTube blocks most cloud/datacenter IPs from fetching transcripts.
+WEBSHARE_USERNAME = os.environ.get("WEBSHARE_USERNAME")
+WEBSHARE_PASSWORD = os.environ.get("WEBSHARE_PASSWORD")
+
+_proxy_config = None
+if WEBSHARE_USERNAME and WEBSHARE_PASSWORD:
+    _proxy_config = WebshareProxyConfig(
+        proxy_username=WEBSHARE_USERNAME,
+        proxy_password=WEBSHARE_PASSWORD,
+    )
+
+_api = YouTubeTranscriptApi(proxy_config=_proxy_config)
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -41,16 +57,14 @@ def get_transcript(
 
     try:
         try:
-            segments = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=[lang, "en", "ko"]
-            )
+            fetched = _api.fetch(video_id, languages=[lang, "en", "ko"])
         except NoTranscriptFound:
             # fall back to whatever transcript is available (auto-generated included)
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript_list = _api.list(video_id)
             transcript = next(iter(transcript_list))
-            segments = transcript.fetch()
+            fetched = transcript.fetch()
 
-        text = " ".join(seg["text"].strip() for seg in segments if seg["text"].strip())
+        text = " ".join(snippet.text.strip() for snippet in fetched if snippet.text.strip())
         return {
             "video_id": video_id,
             "length_chars": len(text),
