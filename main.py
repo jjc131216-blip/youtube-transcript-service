@@ -2,6 +2,7 @@ import os
 import re
 from fastapi import FastAPI, HTTPException, Query
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig
 from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     NoTranscriptFound,
@@ -18,11 +19,16 @@ PROXY_PASSWORD = os.environ.get("PROXY_PASSWORD")
 PROXY_HOST = os.environ.get("PROXY_HOST")
 PROXY_PORT = os.environ.get("PROXY_PORT")
 
-def get_proxies():
+
+def get_proxy_config():
     if PROXY_USERNAME and PROXY_PASSWORD and PROXY_HOST and PROXY_PORT:
         proxy_url = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
-        return {"http": proxy_url, "https": proxy_url}
+        return GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
     return None
+
+
+def get_api():
+    return YouTubeTranscriptApi(proxy_config=get_proxy_config())
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -54,19 +60,17 @@ def get_transcript(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    proxies = get_proxies()
+    ytt_api = get_api()
     try:
         try:
-            segments = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=[lang, "en", "ko"], proxies=proxies
-            )
+            fetched = ytt_api.fetch(video_id, languages=[lang, "en", "ko"])
         except NoTranscriptFound:
             # fall back to whatever transcript is available (auto-generated included)
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, proxies=proxies)
+            transcript_list = ytt_api.list(video_id)
             transcript = next(iter(transcript_list))
-            segments = transcript.fetch()
+            fetched = transcript.fetch()
 
-        text = " ".join(seg["text"].strip() for seg in segments if seg["text"].strip())
+        text = " ".join(seg.text.strip() for seg in fetched if seg.text.strip())
         return {
             "video_id": video_id,
             "length_chars": len(text),
